@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>broom — sweep away duplicate files</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="logo-wrap">
+      <img src="assets/broom.svg" alt="broom logo" class="logo" />
+      <div>
+        <h1>broom</h1>
+        <p class="tagline">Sweep away duplicate files — fast, safe, terminal-native.</p>
+      </div>
+    </div>
+    <a class="btn-primary" href="https://github.com/skrunchtech/broom/releases">
+      Download
+    </a>
+  </header>
+
+  <section class="demo">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+        <span class="title">broom</span>
+      </div>
+      <pre class="terminal-body"><span class="prompt">$</span> broom /Volumes/Extreme\ SSD/macbook_backup /Volumes/Extreme\ SSD/ls_macbook_backup
+
+<span class="brand">╭─ 🧹 broom — 2,847 groups · 14.3 GB recoverable ────────────────╮</span>
+<span class="brand">│</span>  <span class="sel">▼</span> group 1 · 842 MB · 3 files
+<span class="brand">│</span>    [ ] /ls_macbook_backup/Documents/project.zip
+<span class="brand">│</span>    [x] /ls_macbook_backup/archive/project.zip
+<span class="brand">│</span>    [x] /macbook_backup/Documents/project.zip    <span class="kept">★ newest</span>
+<span class="brand">│</span>
+<span class="brand">│</span>  <span class="dim">▶ group 2 · 1.2 GB · 2 files</span>
+<span class="brand">│</span>  <span class="dim">▶ group 3 · 340 MB · 2 files</span>
+<span class="brand">│</span>
+<span class="brand">│</span>  <span class="subtle">[j/k] navigate  [e] expand  [K] keep newest  [D] delete  [R] archive</span>
+<span class="brand">╰─────────────────────────────────────────────────────────────────╯</span></pre>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="feature">
+      <div class="icon">🔍</div>
+      <h3>Three-pass scanning</h3>
+      <p>Size filter → quick 4KB hash → full SHA256. Only hashes what it needs to, fast even on multi-TB drives.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🛡️</div>
+      <h3>Safe by default</h3>
+      <p>Archive mode moves files to a timestamped folder with a full manifest. Restore anything with one command.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">⚡</div>
+      <h3>Parallel hashing</h3>
+      <p>Saturates your SSD using all CPU cores. No tuning required.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🖥️</div>
+      <h3>Beautiful TUI</h3>
+      <p>Built with Bubbletea. Navigate groups, mark files, preview actions — all from the terminal.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📜</div>
+      <h3>Scriptable</h3>
+      <p>Flags for CI/automation: <code>--dry-run</code>, <code>--archive</code>, <code>--delete --yes</code>. Pipe-friendly output.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🔗</div>
+      <h3>Hardlink aware</h3>
+      <p>Detects and skips hardlinks so you never accidentally count the same inode twice.</p>
+    </div>
+  </section>
+
+  <section class="install">
+    <h2>Install</h2>
+    <div class="code-block">
+      <span class="comment"># Homebrew (macOS / Linux)</span>
+      <code>brew install skrunchtech/tap/broom</code>
+    </div>
+    <div class="code-block">
+      <span class="comment"># Go install</span>
+      <code>go install github.com/skrunchtech/broom/cmd/broom@latest</code>
+    </div>
+    <div class="code-block">
+      <span class="comment"># Or download a binary from GitHub Releases</span>
+      <code><a href="https://github.com/skrunchtech/broom/releases">github.com/skrunchtech/broom/releases</a></code>
+    </div>
+  </section>
+
+  <section class="usage">
+    <h2>Usage</h2>
+    <div class="code-block">
+      <span class="comment"># Interactive TUI</span>
+      <code>broom ~/Documents ~/Downloads</code>
+    </div>
+    <div class="code-block">
+      <span class="comment"># Dry run — see what would be removed</span>
+      <code>broom --dry-run /Volumes/Extreme\ SSD</code>
+    </div>
+    <div class="code-block">
+      <span class="comment"># Archive duplicates for verification</span>
+      <code>broom --archive=/tmp/broom-archive /Volumes/Extreme\ SSD</code>
+    </div>
+    <div class="code-block">
+      <span class="comment"># Delete with confirmation</span>
+      <code>broom --delete --keep=newest ~/backups</code>
+    </div>
+  </section>
+
+  <footer>
+    <img src="assets/broom.svg" alt="broom" class="footer-logo" />
+    <p>Open source · MIT License · <a href="https://github.com/skrunchtech/broom">GitHub</a></p>
+    <p class="subtle">Built by <a href="https://skrunch.io">skrunchtech</a></p>
+  </footer>
+
+</body>
+</html>

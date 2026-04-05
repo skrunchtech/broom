@@ -1,0 +1,216 @@
+:root {
+  --brand:    #F4A460;
+  --brand-dk: #C8922A;
+  --bg:       #0f0f0f;
+  --bg2:      #181818;
+  --bg3:      #222222;
+  --text:     #e8e8e8;
+  --subtle:   #888888;
+  --kept:     #50FA7B;
+  --marked:   #FF5555;
+  --radius:   10px;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Header ─────────────────────────────────────────────── */
+header {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 64px 24px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.logo { width: 72px; height: 72px; }
+
+h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--brand);
+  letter-spacing: -1px;
+}
+
+.tagline {
+  color: var(--subtle);
+  font-size: 1.05rem;
+  margin-top: 4px;
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: #000;
+  font-weight: 700;
+  padding: 12px 28px;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+.btn-primary:hover {
+  background: var(--brand-dk);
+  text-decoration: none;
+}
+
+/* ── Demo terminal ───────────────────────────────────────── */
+.demo {
+  max-width: 900px;
+  margin: 0 auto 64px;
+  padding: 0 24px;
+}
+
+.terminal {
+  background: #0a0a0a;
+  border: 1px solid #2a2a2a;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+
+.terminal-bar {
+  background: #1a1a1a;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+}
+.dot.red    { background: #FF5F57; }
+.dot.yellow { background: #FEBC2E; }
+.dot.green  { background: #28C840; }
+
+.title {
+  color: var(--subtle);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.terminal-body {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding: 24px;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text);
+}
+
+.terminal-body .prompt { color: var(--brand); }
+.terminal-body .brand  { color: var(--brand); }
+.terminal-body .kept   { color: var(--kept);  }
+.terminal-body .marked { color: var(--marked);}
+.terminal-body .sel    { color: var(--brand); font-weight: bold; }
+.terminal-body .dim    { color: var(--subtle);}
+.terminal-body .subtle { color: #555; }
+
+/* ── Features ────────────────────────────────────────────── */
+.features {
+  max-width: 900px;
+  margin: 0 auto 72px;
+  padding: 0 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.feature {
+  background: var(--bg2);
+  border: 1px solid #2a2a2a;
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  transition: border-color 0.2s;
+}
+.feature:hover { border-color: var(--brand); }
+
+.feature .icon { font-size: 1.8rem; margin-bottom: 12px; }
+.feature h3 { font-size: 1rem; margin-bottom: 8px; color: var(--brand); }
+.feature p  { color: var(--subtle); font-size: 0.9rem; }
+.feature code {
+  background: var(--bg3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+/* ── Install / Usage ─────────────────────────────────────── */
+.install, .usage {
+  max-width: 700px;
+  margin: 0 auto 64px;
+  padding: 0 24px;
+}
+
+.install h2, .usage h2 {
+  font-size: 1.6rem;
+  color: var(--brand);
+  margin-bottom: 24px;
+}
+
+.code-block {
+  background: var(--bg2);
+  border: 1px solid #2a2a2a;
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+}
+
+.code-block .comment {
+  display: block;
+  color: var(--subtle);
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.code-block code {
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+/* ── Footer ──────────────────────────────────────────────── */
+footer {
+  text-align: center;
+  padding: 48px 24px 64px;
+  border-top: 1px solid #1e1e1e;
+  color: var(--subtle);
+  font-size: 0.9rem;
+}
+
+.footer-logo {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 16px;
+  opacity: 0.7;
+}
+
+footer p { margin-bottom: 6px; }
+footer .subtle { font-size: 0.8rem; }
