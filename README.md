@@ -141,7 +141,8 @@ Use `--no-default-excludes` to scan everything, or `--exclude=<name>` to add mor
 | `K` | Auto-mark all groups (keep newest in each) |
 | `A` | Select all duplicates across all groups |
 | `U` | Unselect all (clear all marks, start fresh) |
-| `u` | Unmark / skip current group only |
+| `a` | Select current group only |
+| `u` | Unselect / skip current group only |
 | `D` | Delete all marked files |
 | `R` | Archive all marked files |
 | `P` | Dry-run preview (show what would happen) |
@@ -154,7 +155,8 @@ Use `--no-default-excludes` to scan everything, or `--exclude=<name>` to add mor
 | `j` / `k` | Navigate matches |
 | `A` | Select all duplicate folders across all matches |
 | `U` | Unselect all (clear all marks, start fresh) |
-| `u` | Unmark / skip current match only |
+| `a` | Select current match only |
+| `u` | Unselect / skip current match only |
 | `D` | Delete all marked folders |
 | `R` | Archive all marked folders |
 | `q` | Quit |
