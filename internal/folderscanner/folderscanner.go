@@ -158,39 +158,59 @@ func Scan(ctx context.Context, paths []string, opts scanner.Options, progress sc
 	return matches, nil
 }
 
-// pruneSubMatches removes folder matches that are subdirectories of an already-matched pair.
+// pruneSubMatches removes nonsensical and redundant folder matches:
+// 1. Matches where any folder in the group is an ancestor of another in the same group
+//    (e.g. /backup and /backup/amit.malhotra — deleting the child empties the parent)
+// 2. Matches where all folders are subdirectories of an already-matched top-level pair.
 func pruneSubMatches(matches []FolderMatch) []FolderMatch {
-	// Collect all matched folder paths.
-	type pair struct{ a, b string }
-	var pairs []pair
-	for _, m := range matches {
-		if len(m.Folders) >= 2 {
-			pairs = append(pairs, pair{m.Folders[0].Path, m.Folders[1].Path})
-		}
-	}
-
 	var result []FolderMatch
-outer:
+
 	for _, m := range matches {
 		if len(m.Folders) < 2 {
 			continue
 		}
+
+		// Rule 1: skip if any folder is a parent/ancestor of another in the same match.
+		ancestorConflict := false
+		for i := range m.Folders {
+			for j := range m.Folders {
+				if i == j {
+					continue
+				}
+				if isSubdir(m.Folders[i].Path, m.Folders[j].Path) {
+					ancestorConflict = true
+					break
+				}
+			}
+			if ancestorConflict {
+				break
+			}
+		}
+		if ancestorConflict {
+			continue
+		}
+
+		result = append(result, m)
+	}
+
+	// Rule 2: remove matches whose folders are all subdirs of an already-kept top-level pair.
+	var pruned []FolderMatch
+outer:
+	for _, m := range result {
 		a, b := m.Folders[0].Path, m.Folders[1].Path
-		for _, p := range pairs {
-			if p.a == a && p.b == b {
-				continue // same match, skip self-check
+		for _, p := range result {
+			if p.Signature == m.Signature {
+				continue
 			}
-			// If both paths are subdirectories of an existing matched pair, prune.
-			if isSubdir(p.a, a) && isSubdir(p.b, b) {
-				continue outer
-			}
-			if isSubdir(p.b, a) && isSubdir(p.a, b) {
+			pa, pb := p.Folders[0].Path, p.Folders[1].Path
+			if (isSubdir(pa, a) && isSubdir(pb, b)) ||
+				(isSubdir(pb, a) && isSubdir(pa, b)) {
 				continue outer
 			}
 		}
-		result = append(result, m)
+		pruned = append(pruned, m)
 	}
-	return result
+	return pruned
 }
 
 func isSubdir(parent, child string) bool {
