@@ -341,6 +341,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.groups[i].marked[j] = j != g.keepIdx
 				}
 			}
+		case "a":
+			// Mark current group (all files except keeper).
+			for j := range m.groups[m.cursor].marked {
+				m.groups[m.cursor].marked[j] = j != m.groups[m.cursor].keepIdx
+			}
 		case "u":
 			// Unmark all files in current group (skip this group).
 			for j := range m.groups[m.cursor].marked {
@@ -372,6 +377,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "k", "up":
 			if m.cursor > 0 {
 				m.cursor--
+			}
+		case "a":
+			// Mark current match (all folders except the kept one).
+			for j := range m.folderMatches[m.cursor].marked {
+				m.folderMatches[m.cursor].marked[j] = j != 0
 			}
 		case "u":
 			// Unmark all folders in current match (skip it).
@@ -681,7 +691,7 @@ func (m Model) viewResults() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all  [U] unselect all  [u] skip group"))
+	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all  [U] unselect all  [a] select group  [u] skip group"))
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked  [R] archive marked  [P] dry-run preview  [q] quit"))
 
@@ -758,7 +768,7 @@ func (m *Model) viewFolderResults() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(styleBar.Render("[j/k] navigate  [A] select all  [U] unselect all  [u] skip match"))
+	b.WriteString(styleBar.Render("[j/k] navigate  [A] select all  [U] unselect all  [a] select match  [u] skip match"))
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked folders  [R] archive marked folders  [q] quit"))
 	return styleBox.Render(b.String())
