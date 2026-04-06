@@ -197,8 +197,10 @@ type hashResult struct {
 }
 
 func hashGroup(ctx context.Context, files []FileInfo, workers int, quick bool, progress func(done, total int)) (map[string][]FileInfo, error) {
-	jobs := make(chan hashJob, len(files))
-	results := make(chan hashResult, len(files))
+	// Small buffers keep memory bounded on large drives.
+	// Workers stream jobs; reader processes results as they arrive.
+	jobs := make(chan hashJob, workers*2)
+	results := make(chan hashResult, workers*2)
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -216,10 +218,13 @@ func hashGroup(ctx context.Context, files []FileInfo, workers int, quick bool, p
 		}()
 	}
 
-	for _, f := range files {
-		jobs <- hashJob{file: f, quick: quick}
-	}
-	close(jobs)
+	// Enqueue jobs in a goroutine so it doesn't block with small buffer.
+	go func() {
+		for _, f := range files {
+			jobs <- hashJob{file: f, quick: quick}
+		}
+		close(jobs)
+	}()
 
 	go func() {
 		wg.Wait()

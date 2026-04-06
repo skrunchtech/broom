@@ -346,6 +346,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			for j := range m.groups[m.cursor].marked {
 				m.groups[m.cursor].marked[j] = false
 			}
+		case "U":
+			// Unmark everything across all groups.
+			for i := range m.groups {
+				for j := range m.groups[i].marked {
+					m.groups[i].marked[j] = false
+				}
+			}
 		case "D":
 			return m, m.execDelete()
 		case "R":
@@ -367,9 +374,16 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "u":
-			// Unmark all folders in this match (skip it).
+			// Unmark all folders in current match (skip it).
 			for j := range m.folderMatches[m.cursor].marked {
 				m.folderMatches[m.cursor].marked[j] = false
+			}
+		case "U":
+			// Unmark everything across all matches.
+			for i := range m.folderMatches {
+				for j := range m.folderMatches[i].marked {
+					m.folderMatches[i].marked[j] = false
+				}
 			}
 		case "A":
 			// Mark all duplicates across all matches.
@@ -596,7 +610,11 @@ func (m *Model) viewScanning() string {
 			if m.scanTotal > 0 {
 				pct := int(float64(m.scanDone) / float64(m.scanTotal) * 100)
 				b.WriteString("  " + m.progressBar.View() + "\n")
-				b.WriteString(styleSubtle.Render(fmt.Sprintf("  %d / %d files (%d%%)", m.scanDone, m.scanTotal, pct)) + "\n")
+				if m.scanDone >= m.scanTotal {
+					b.WriteString(styleSubtle.Render("  Finalizing results...") + "\n")
+				} else {
+					b.WriteString(styleSubtle.Render(fmt.Sprintf("  %d / %d files (%d%%)", m.scanDone, m.scanTotal, pct)) + "\n")
+				}
 			} else if m.scanDone > 0 {
 				b.WriteString(styleSubtle.Render(fmt.Sprintf("  %d files found...", m.scanDone)) + "\n")
 			} else {
@@ -621,8 +639,11 @@ func (m Model) viewResults() string {
 	header := fmt.Sprintf(" 🧹 broom — %d groups · %s recoverable ", len(m.groups), humanBytes(m.totalDupes))
 	b.WriteString(styleHeader.Render(header) + "\n\n")
 
-	// Show up to ~20 groups fitting in terminal.
-	visible := 20
+	// Scroll based on terminal height so cursor is always visible.
+	visible := m.height - 8
+	if visible < 4 {
+		visible = 4
+	}
 	start := 0
 	if m.cursor > visible-3 {
 		start = m.cursor - visible + 3
@@ -660,7 +681,7 @@ func (m Model) viewResults() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all  [u] skip group"))
+	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all  [U] unselect all  [u] skip group"))
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked  [R] archive marked  [P] dry-run preview  [q] quit"))
 
@@ -678,14 +699,43 @@ func (m *Model) viewFolderResults() string {
 		len(m.folderMatches), humanBytes(m.totalFolderDupes))
 	b.WriteString(styleHeader.Render(header) + "\n\n")
 
-	visible := 20
-	start := 0
-	if m.cursor > visible-3 {
-		start = m.cursor - visible + 3
+	// Each match renders 1 header line + N folder lines + 1 blank line.
+	// Scroll so the cursor is always visible within the terminal height.
+	viewport := m.height - 8 // reserve header + footer lines
+	if viewport < 4 {
+		viewport = 4
 	}
 
-	for i := start; i < len(m.folderMatches) && i < start+visible; i++ {
+	// Find the start index that keeps cursor in view.
+	// Track cumulative line count to determine scroll position.
+	linesBeforeCursor := 0
+	for i := 0; i < m.cursor; i++ {
+		linesBeforeCursor += len(m.folderMatches[i].match.Folders) + 2
+	}
+	start := 0
+	lineCount := 0
+	for i := 0; i < len(m.folderMatches); i++ {
+		linesForMatch := len(m.folderMatches[i].match.Folders) + 2
+		if lineCount+linesForMatch > viewport && i <= m.cursor {
+			start = i
+			lineCount = 0
+		}
+		if i == m.cursor {
+			break
+		}
+		lineCount += linesForMatch
+	}
+	_ = linesBeforeCursor
+
+	rendered := 0
+	for i := start; i < len(m.folderMatches); i++ {
 		fm := m.folderMatches[i]
+		linesForMatch := len(fm.match.Folders) + 2
+		if rendered+linesForMatch > viewport {
+			break
+		}
+		rendered += linesForMatch
+
 		cursor := "  "
 		if i == m.cursor {
 			cursor = styleSelected.Render("▸ ")
@@ -708,7 +758,7 @@ func (m *Model) viewFolderResults() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(styleBar.Render("[j/k] navigate  [u] skip match  [A] select all"))
+	b.WriteString(styleBar.Render("[j/k] navigate  [A] select all  [U] unselect all  [u] skip match"))
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked folders  [R] archive marked folders  [q] quit"))
 	return styleBox.Render(b.String())
