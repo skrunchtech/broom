@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -11,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/skrunchtech/broom/internal/actions"
+	"github.com/skrunchtech/broom/internal/folderscanner"
 	"github.com/skrunchtech/broom/internal/scanner"
 )
 
@@ -56,10 +58,11 @@ var (
 type viewState int
 
 const (
-	viewPicker   viewState = iota // folder selection
-	viewScanning                  // scanning in progress
-	viewResults                   // duplicate groups
-	viewDone                      // action completed
+	viewPicker        viewState = iota // folder selection
+	viewScanning                       // scanning in progress
+	viewResults                        // file duplicate groups
+	viewFolderResults                  // folder duplicate groups
+	viewDone                           // action completed
 )
 
 // -- Messages ----------------------------------------------------------------
@@ -73,6 +76,11 @@ type scanProgressMsg struct {
 type scanDoneMsg struct {
 	groups []scanner.DuplicateGroup
 	err    error
+}
+
+type folderScanDoneMsg struct {
+	matches []folderscanner.FolderMatch
+	err     error
 }
 
 type actionDoneMsg struct {
@@ -89,18 +97,24 @@ type groupState struct {
 	keepIdx  int
 }
 
+type folderMatchState struct {
+	match  folderscanner.FolderMatch
+	marked []bool // which folders are marked for removal
+}
+
 type Model struct {
 	// Config
-	opts       scanner.Options
-	strategy   actions.KeepStrategy
-	archiveDir string
+	opts        scanner.Options
+	strategy    actions.KeepStrategy
+	archiveDir  string
+	folderMode  bool
 
 	// View
-	state     viewState
-	width     int
-	height    int
-	cursor    int // selected group in results view
-	fileCursor int // selected file within expanded group
+	state      viewState
+	width      int
+	height     int
+	cursor     int
+	fileCursor int
 
 	// Folder picker
 	folders     []string
@@ -115,16 +129,20 @@ type Model struct {
 	cancelScan  context.CancelFunc
 	progressCh  chan scanProgressMsg
 
-	// Results
-	groups      []groupState
-	totalDupes  int64 // bytes recoverable
+	// File results
+	groups     []groupState
+	totalDupes int64
+
+	// Folder results
+	folderMatches    []folderMatchState
+	totalFolderDupes int64
 
 	// Done
 	doneResults []actions.Result
 	doneErr     error
 }
 
-func NewModel(folders []string, opts scanner.Options, strategy actions.KeepStrategy, archiveDir string) Model {
+func NewModel(folders []string, opts scanner.Options, strategy actions.KeepStrategy, archiveDir string, folderMode bool) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styleBrand
@@ -135,6 +153,7 @@ func NewModel(folders []string, opts scanner.Options, strategy actions.KeepStrat
 		opts:        opts,
 		strategy:    strategy,
 		archiveDir:  archiveDir,
+		folderMode:  folderMode,
 		folders:     folders,
 		spinner:     sp,
 		progressBar: pb,
@@ -222,6 +241,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.state = viewResults
+		return m, nil
+
+	case folderScanDoneMsg:
+		if msg.err != nil {
+			m.doneErr = msg.err
+			m.state = viewDone
+			return m, nil
+		}
+		m.folderMatches = make([]folderMatchState, len(msg.matches))
+		m.totalFolderDupes = 0
+		for i, match := range msg.matches {
+			marked := make([]bool, len(match.Folders))
+			// Auto-mark all but the first (largest/root) folder.
+			for j := range marked {
+				marked[j] = j != 0
+			}
+			m.folderMatches[i] = folderMatchState{match: match, marked: marked}
+			m.totalFolderDupes += match.Size * int64(len(match.Folders)-1)
+		}
+		m.state = viewFolderResults
 		return m, nil
 
 	case actionDoneMsg:
@@ -315,6 +354,36 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.execDryRun()
 		}
 
+	case viewFolderResults:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "j", "down":
+			if m.cursor < len(m.folderMatches)-1 {
+				m.cursor++
+			}
+		case "k", "up":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "u":
+			// Unmark all folders in this match (skip it).
+			for j := range m.folderMatches[m.cursor].marked {
+				m.folderMatches[m.cursor].marked[j] = false
+			}
+		case "A":
+			// Mark all duplicates across all matches.
+			for i, fm := range m.folderMatches {
+				for j := range fm.marked {
+					m.folderMatches[i].marked[j] = j != 0
+				}
+			}
+		case "D":
+			return m, m.execFolderDelete()
+		case "R":
+			return m, m.execFolderArchive()
+		}
+
 	case viewDone:
 		switch msg.String() {
 		case "q", "ctrl+c", "enter":
@@ -337,15 +406,26 @@ func (m *Model) startScan() tea.Cmd {
 	progCh := make(chan scanProgressMsg, 64)
 	m.progressCh = progCh
 
-	scanCmd := func() tea.Msg {
-		groups, err := scanner.Scan(ctx, folders, opts, func(pass, done, total int) {
-			select {
-			case progCh <- scanProgressMsg{pass: pass, done: done, total: total}:
-			default:
-			}
-		})
-		close(progCh)
-		return scanDoneMsg{groups: groups, err: err}
+	progress := func(pass, done, total int) {
+		select {
+		case progCh <- scanProgressMsg{pass: pass, done: done, total: total}:
+		default:
+		}
+	}
+
+	var scanCmd tea.Cmd
+	if m.folderMode {
+		scanCmd = func() tea.Msg {
+			matches, err := folderscanner.Scan(ctx, folders, opts, progress)
+			close(progCh)
+			return folderScanDoneMsg{matches: matches, err: err}
+		}
+	} else {
+		scanCmd = func() tea.Msg {
+			groups, err := scanner.Scan(ctx, folders, opts, progress)
+			close(progCh)
+			return scanDoneMsg{groups: groups, err: err}
+		}
 	}
 
 	return tea.Batch(scanCmd, waitForProgress(progCh))
@@ -413,6 +493,57 @@ func (m Model) execArchive() tea.Cmd {
 	}
 }
 
+func (m Model) execFolderDelete() tea.Cmd {
+	var paths []string
+	for _, fm := range m.folderMatches {
+		for j, f := range fm.match.Folders {
+			if fm.marked[j] {
+				paths = append(paths, f.Path)
+			}
+		}
+	}
+	return func() tea.Msg {
+		var results []actions.Result
+		for _, p := range paths {
+			if err := os.RemoveAll(p); err != nil {
+				return actionDoneMsg{results: results, err: err}
+			}
+			results = append(results, actions.Result{Action: "deleted", Path: p})
+		}
+		return actionDoneMsg{results: results}
+	}
+}
+
+func (m Model) execFolderArchive() tea.Cmd {
+	type entry struct{ path string }
+	var entries []entry
+	for _, fm := range m.folderMatches {
+		for j, f := range fm.match.Folders {
+			if fm.marked[j] {
+				entries = append(entries, entry{f.Path})
+			}
+		}
+	}
+	dir := m.archiveDir
+	if dir == "" {
+		dir = os.TempDir() + "/broom-archive"
+	}
+	return func() tea.Msg {
+		var results []actions.Result
+		for _, e := range entries {
+			dest := filepath.Join(dir, filepath.Base(e.path))
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return actionDoneMsg{results: results, err: err}
+			}
+			if err := os.Rename(e.path, dest); err != nil {
+				return actionDoneMsg{results: results, err: err}
+			}
+			results = append(results, actions.Result{Action: "archived", Path: dest, Original: e.path})
+		}
+		return actionDoneMsg{results: results}
+	}
+}
+
 // -- View --------------------------------------------------------------------
 
 func (m *Model) View() string {
@@ -423,6 +554,8 @@ func (m *Model) View() string {
 		return m.viewScanning()
 	case viewResults:
 		return m.viewResults()
+	case viewFolderResults:
+		return m.viewFolderResults()
 	case viewDone:
 		return m.viewDone()
 	}
@@ -531,6 +664,53 @@ func (m Model) viewResults() string {
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked  [R] archive marked  [P] dry-run preview  [q] quit"))
 
+	return styleBox.Render(b.String())
+}
+
+func (m *Model) viewFolderResults() string {
+	if len(m.folderMatches) == 0 {
+		return styleBox.Render(styleKept.Render("\n  ✓ No duplicate folders found!\n\n") +
+			styleBar.Render("  [q] quit"))
+	}
+
+	var b strings.Builder
+	header := fmt.Sprintf(" 🧹 broom — %d duplicate folders · %s recoverable ",
+		len(m.folderMatches), humanBytes(m.totalFolderDupes))
+	b.WriteString(styleHeader.Render(header) + "\n\n")
+
+	visible := 20
+	start := 0
+	if m.cursor > visible-3 {
+		start = m.cursor - visible + 3
+	}
+
+	for i := start; i < len(m.folderMatches) && i < start+visible; i++ {
+		fm := m.folderMatches[i]
+		cursor := "  "
+		if i == m.cursor {
+			cursor = styleSelected.Render("▸ ")
+		}
+		b.WriteString(fmt.Sprintf("%s⊟ match %d · %s · %d folders · %d files\n",
+			cursor, i+1, humanBytes(fm.match.Size), len(fm.match.Folders), fm.match.FileCount))
+
+		for j, f := range fm.match.Folders {
+			check := "[ ]"
+			style := styleKept
+			marker := styleKept.Render(" ★ keep")
+			if fm.marked[j] {
+				check = styleMarked.Render("[x]")
+				style = styleMarked
+				marker = ""
+			}
+			b.WriteString(fmt.Sprintf("    %s %s%s\n",
+				check, style.Render(truncatePath(f.Path, m.width-14)), marker))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(styleBar.Render("[j/k] navigate  [u] skip match  [A] select all"))
+	b.WriteString("\n")
+	b.WriteString(styleBar.Render("[D] delete marked folders  [R] archive marked folders  [q] quit"))
 	return styleBox.Render(b.String())
 }
 
