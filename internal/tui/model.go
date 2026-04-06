@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -111,6 +112,8 @@ type Model struct {
 	scanPass    int
 	scanDone    int
 	scanTotal   int
+	cancelScan  context.CancelFunc
+	progressCh  chan scanProgressMsg
 
 	// Results
 	groups      []groupState
@@ -137,21 +140,24 @@ func NewModel(folders []string, opts scanner.Options, strategy actions.KeepStrat
 		progressBar: pb,
 	}
 
-	if len(folders) == 0 {
-		m.state = viewPicker
+	if len(folders) > 0 {
+		m.state = viewScanning
 	} else {
 		m.state = viewPicker
 	}
 	return m
 }
 
-func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick)
+func (m *Model) Init() tea.Cmd {
+	if m.state == viewScanning {
+		return tea.Batch(m.spinner.Tick, m.startScan())
+	}
+	return m.spinner.Tick
 }
 
 // -- Update ------------------------------------------------------------------
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -179,11 +185,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scanPass = msg.pass
 		m.scanDone = msg.done
 		m.scanTotal = msg.total
+		var cmds []tea.Cmd
 		if msg.total > 0 {
-			cmd := m.progressBar.SetPercent(float64(msg.done) / float64(msg.total))
-			return m, cmd
+			cmds = append(cmds, m.progressBar.SetPercent(float64(msg.done)/float64(msg.total)))
 		}
-		return m, nil
+		// Re-subscribe for next progress event.
+		if m.progressCh != nil {
+			cmds = append(cmds, waitForProgress(m.progressCh))
+		}
+		return m, tea.Batch(cmds...)
 
 	case scanDoneMsg:
 		if msg.err != nil {
@@ -224,8 +234,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
+
+	case viewScanning:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			if m.cancelScan != nil {
+				m.cancelScan()
+			}
+			return m, tea.Quit
+		}
 
 	case viewPicker:
 		switch msg.String() {
@@ -283,6 +302,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.groups[i].marked[j] = j != g.keepIdx
 				}
 			}
+		case "u":
+			// Unmark all files in current group (skip this group).
+			for j := range m.groups[m.cursor].marked {
+				m.groups[m.cursor].marked[j] = false
+			}
 		case "D":
 			return m, m.execDelete()
 		case "R":
@@ -303,17 +327,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // -- Commands ----------------------------------------------------------------
 
-func (m Model) startScan() tea.Cmd {
-	return func() tea.Msg {
-		groups, err := scanner.Scan(m.folders, m.opts, func(pass, done, total int) {
-			// Note: in a real app, send progress via channel; simplified here.
-			_ = pass
-			_ = done
-			_ = total
+func (m *Model) startScan() tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelScan = cancel
+	folders := m.folders
+	opts := m.opts
+
+	// Buffered so progress callbacks never block the scan.
+	progCh := make(chan scanProgressMsg, 64)
+	m.progressCh = progCh
+
+	scanCmd := func() tea.Msg {
+		groups, err := scanner.Scan(ctx, folders, opts, func(pass, done, total int) {
+			select {
+			case progCh <- scanProgressMsg{pass: pass, done: done, total: total}:
+			default:
+			}
 		})
+		close(progCh)
 		return scanDoneMsg{groups: groups, err: err}
 	}
+
+	return tea.Batch(scanCmd, waitForProgress(progCh))
 }
+
+// waitForProgress blocks until the next progress event then re-subscribes.
+func waitForProgress(ch chan scanProgressMsg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
 
 func (m Model) markedGroups() []scanner.DuplicateGroup {
 	var result []scanner.DuplicateGroup
@@ -367,7 +415,7 @@ func (m Model) execArchive() tea.Cmd {
 
 // -- View --------------------------------------------------------------------
 
-func (m Model) View() string {
+func (m *Model) View() string {
 	switch m.state {
 	case viewPicker:
 		return m.viewPicker()
@@ -401,25 +449,32 @@ func (m Model) viewPicker() string {
 	return styleBox.Render(b.String())
 }
 
-func (m Model) viewScanning() string {
+func (m *Model) viewScanning() string {
 	var b strings.Builder
 	b.WriteString(styleHeader.Render(" 🧹 broom — scanning ") + "\n\n")
 
-	passNames := []string{"", "Walking directories", "Quick hash", "Full SHA256"}
+	passNames := []string{"", "Walking directories", "Quick hash (4KB)", "Full SHA256"}
 	for i := 1; i <= 3; i++ {
 		name := passNames[i]
 		if i < m.scanPass {
-			b.WriteString(styleKept.Render("  ✓ Pass "+fmt.Sprint(i)+" "+name) + "\n")
+			b.WriteString(styleKept.Render("  ✓ Pass "+fmt.Sprint(i)+" — "+name) + "\n\n")
 		} else if i == m.scanPass {
-			b.WriteString("  " + m.spinner.View() + " Pass " + fmt.Sprint(i) + " " + name + "\n")
+			b.WriteString("  " + m.spinner.View() + " Pass " + fmt.Sprint(i) + " — " + name + "\n")
 			if m.scanTotal > 0 {
+				pct := int(float64(m.scanDone) / float64(m.scanTotal) * 100)
 				b.WriteString("  " + m.progressBar.View() + "\n")
+				b.WriteString(styleSubtle.Render(fmt.Sprintf("  %d / %d files (%d%%)", m.scanDone, m.scanTotal, pct)) + "\n")
+			} else if m.scanDone > 0 {
+				b.WriteString(styleSubtle.Render(fmt.Sprintf("  %d files found...", m.scanDone)) + "\n")
+			} else {
+				b.WriteString(styleSubtle.Render("  Starting...") + "\n")
 			}
+			b.WriteString("\n")
 		} else {
-			b.WriteString(styleDim.Render("  ○ Pass "+fmt.Sprint(i)+" "+name) + "\n")
+			b.WriteString(styleDim.Render("  ○ Pass "+fmt.Sprint(i)+" — "+name) + "\n\n")
 		}
 	}
-	b.WriteString("\n" + styleBar.Render("[q] cancel"))
+	b.WriteString(styleBar.Render("[q] cancel"))
 	return styleBox.Render(b.String())
 }
 
@@ -466,13 +521,13 @@ func (m Model) viewResults() string {
 					keepMark = styleKept.Render(" ★")
 					style = styleKept
 				}
-				b.WriteString(fmt.Sprintf("    %s %s%s\n", check, style.Render(f.Path), keepMark))
+				b.WriteString(fmt.Sprintf("    %s %s%s\n", check, style.Render(truncatePath(f.Path, m.width-12)), keepMark))
 			}
 		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all"))
+	b.WriteString(styleBar.Render("[j/k] navigate  [e/space] expand  [K] auto-keep newest  [A] select all  [u] skip group"))
 	b.WriteString("\n")
 	b.WriteString(styleBar.Render("[D] delete marked  [R] archive marked  [P] dry-run preview  [q] quit"))
 
@@ -516,6 +571,15 @@ func (m Model) viewDone() string {
 }
 
 // -- Helpers -----------------------------------------------------------------
+
+// truncatePath shortens a path to maxLen by keeping the end (most informative part).
+// e.g. "/very/long/path/to/file.txt" → "…/path/to/file.txt"
+func truncatePath(path string, maxLen int) string {
+	if maxLen <= 0 || len(path) <= maxLen {
+		return path
+	}
+	return "…" + path[len(path)-maxLen+1:]
+}
 
 func humanBytes(b int64) string {
 	const unit = 1024

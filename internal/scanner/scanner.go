@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -26,19 +27,38 @@ type DuplicateGroup struct {
 	Files []FileInfo
 }
 
+// DefaultExcludeDirs are skipped by default — noisy, rarely contain personal duplicates.
+var DefaultExcludeDirs = []string{
+	"node_modules", ".git", ".hg", ".svn",
+	"__pycache__", ".venv", "venv",
+	"dist", "build", ".next", ".nuxt",
+	".Trash", ".Spotlight-V100", ".fseventsd",
+}
+
 // Options configures a scan.
 type Options struct {
-	MinSize       int64
-	Workers       int
+	MinSize     int64
+	Workers     int
 	IncludeHidden bool
+	ExcludeDirs   []string // directory names to skip entirely
 }
 
 // DefaultOptions returns sensible defaults.
 func DefaultOptions() Options {
 	return Options{
-		MinSize: 1 * 1024 * 1024, // 1 MB
-		Workers: runtime.NumCPU(),
+		MinSize:     1 * 1024 * 1024, // 1 MB
+		Workers:     runtime.NumCPU(),
+		ExcludeDirs: DefaultExcludeDirs,
 	}
+}
+
+func (o Options) isExcluded(name string) bool {
+	for _, ex := range o.ExcludeDirs {
+		if name == ex {
+			return true
+		}
+	}
+	return false
 }
 
 // ProgressFunc is called periodically during scanning.
@@ -47,9 +67,10 @@ func DefaultOptions() Options {
 type ProgressFunc func(pass int, done, total int)
 
 // Scan walks the given paths and returns duplicate groups.
-func Scan(paths []string, opts Options, progress ProgressFunc) ([]DuplicateGroup, error) {
+// Cancelling ctx stops the scan and returns ctx.Err().
+func Scan(ctx context.Context, paths []string, opts Options, progress ProgressFunc) ([]DuplicateGroup, error) {
 	// Pass 1: walk and group by size.
-	bySize, err := walkAndGroup(paths, opts, progress)
+	bySize, err := walkAndGroup(ctx, paths, opts, progress)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +84,7 @@ func Scan(paths []string, opts Options, progress ProgressFunc) ([]DuplicateGroup
 	}
 
 	// Pass 2: quick hash (first 4KB).
-	quickGroups, err := hashGroup(candidates, opts.Workers, true, func(done, total int) {
+	quickGroups, err := hashGroup(ctx, candidates, opts.Workers, true, func(done, total int) {
 		if progress != nil {
 			progress(2, done, total)
 		}
@@ -81,7 +102,7 @@ func Scan(paths []string, opts Options, progress ProgressFunc) ([]DuplicateGroup
 	}
 
 	// Pass 3: full SHA256.
-	fullGroups, err := hashGroup(fullCandidates, opts.Workers, false, func(done, total int) {
+	fullGroups, err := hashGroup(ctx, fullCandidates, opts.Workers, false, func(done, total int) {
 		if progress != nil {
 			progress(3, done, total)
 		}
@@ -103,16 +124,22 @@ func Scan(paths []string, opts Options, progress ProgressFunc) ([]DuplicateGroup
 	return result, nil
 }
 
-func walkAndGroup(paths []string, opts Options, progress ProgressFunc) (map[int64][]FileInfo, error) {
+func walkAndGroup(ctx context.Context, paths []string, opts Options, progress ProgressFunc) (map[int64][]FileInfo, error) {
 	bySize := make(map[int64][]FileInfo)
 	seen := make(map[uint64]bool) // inode dedup
 
 	for _, root := range paths {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil {
 				return nil // skip unreadable
 			}
 			if d.IsDir() {
+				if opts.isExcluded(d.Name()) {
+					return filepath.SkipDir
+				}
 				if !opts.IncludeHidden && isHidden(d.Name()) && d.Name() != "." {
 					return filepath.SkipDir
 				}
@@ -169,7 +196,7 @@ type hashResult struct {
 	err  error
 }
 
-func hashGroup(files []FileInfo, workers int, quick bool, progress ProgressFunc) (map[string][]FileInfo, error) {
+func hashGroup(ctx context.Context, files []FileInfo, workers int, quick bool, progress func(done, total int)) (map[string][]FileInfo, error) {
 	jobs := make(chan hashJob, len(files))
 	results := make(chan hashResult, len(files))
 
@@ -179,6 +206,10 @@ func hashGroup(files []FileInfo, workers int, quick bool, progress ProgressFunc)
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
+				if ctx.Err() != nil {
+					// Drain remaining jobs so channel closes.
+					continue
+				}
 				h, err := hashFile(j.file.Path, j.quick)
 				results <- hashResult{file: j.file, hash: h, err: err}
 			}
@@ -206,6 +237,10 @@ func hashGroup(files []FileInfo, workers int, quick bool, progress ProgressFunc)
 			continue
 		}
 		groups[r.hash] = append(groups[r.hash], r.file)
+	}
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	return groups, nil
 }
