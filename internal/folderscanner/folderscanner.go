@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -80,12 +81,18 @@ func Scan(ctx context.Context, paths []string, opts scanner.Options, progress sc
 	// We register the hash up the entire ancestor chain within the scan roots.
 	roots := make(map[string]struct{})
 	for _, p := range paths {
-		abs, _ := filepath.Abs(p)
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, fmt.Errorf("resolve path %s: %w", p, err)
+		}
 		roots[abs] = struct{}{}
 	}
 
-	registerFile := func(filePath string, fileHash string, fileSize int64) {
-		abs, _ := filepath.Abs(filePath)
+	registerFile := func(filePath string, fileHash string, fileSize int64) error {
+		abs, err := filepath.Abs(filePath)
+		if err != nil {
+			return fmt.Errorf("resolve path %s: %w", filePath, err)
+		}
 		dir := filepath.Dir(abs)
 		for {
 			f := getDir(dir)
@@ -101,11 +108,14 @@ func Scan(ctx context.Context, paths []string, opts scanner.Options, progress sc
 			}
 			dir = parent
 		}
+		return nil
 	}
 
 	for _, g := range allGroups {
 		for _, fi := range g.Files {
-			registerFile(fi.Path, g.Hash, fi.Size)
+			if err := registerFile(fi.Path, g.Hash, fi.Size); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// Also register files that had no duplicates (singletons).

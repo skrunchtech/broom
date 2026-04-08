@@ -508,10 +508,14 @@ func (m Model) execDelete() tea.Cmd {
 func (m Model) execArchive() tea.Cmd {
 	groups := m.markedGroups()
 	dir := m.archiveDir
-	if dir == "" {
-		dir = os.TempDir() + "/broom-archive"
-	}
 	return func() tea.Msg {
+		if dir == "" {
+			var err error
+			dir, err = os.MkdirTemp("", "broom-archive-*")
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+		}
 		results, err := actions.Archive(groups, m.strategy, dir)
 		return actionDoneMsg{results: results, err: err}
 	}
@@ -549,14 +553,18 @@ func (m Model) execFolderArchive() tea.Cmd {
 		}
 	}
 	dir := m.archiveDir
-	if dir == "" {
-		dir = os.TempDir() + "/broom-archive"
-	}
 	return func() tea.Msg {
+		if dir == "" {
+			var err error
+			dir, err = os.MkdirTemp("", "broom-archive-*")
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+		}
 		var results []actions.Result
 		for _, e := range entries {
 			dest := filepath.Join(dir, filepath.Base(e.path))
-			if err := os.MkdirAll(dir, 0755); err != nil {
+			if err := os.MkdirAll(dir, 0700); err != nil {
 				return actionDoneMsg{results: results, err: err}
 			}
 			if err := os.Rename(e.path, dest); err != nil {

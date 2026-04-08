@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/skrunchtech/broom/internal/scanner"
@@ -102,12 +103,13 @@ func Delete(groups []scanner.DuplicateGroup, strategy KeepStrategy) ([]Result, e
 func Archive(groups []scanner.DuplicateGroup, strategy KeepStrategy, archiveDir string) ([]Result, error) {
 	runID := time.Now().Format("2006-01-02T15-04-05")
 	runDir := filepath.Join(archiveDir, runID)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	if err := os.MkdirAll(runDir, 0700); err != nil {
 		return nil, err
 	}
 
 	// Find common root to strip from archived paths.
 	root := commonRoot(groups)
+	cleanRunDir := filepath.Clean(runDir)
 
 	var results []Result
 	for _, g := range groups {
@@ -119,11 +121,16 @@ func Archive(groups []scanner.DuplicateGroup, strategy KeepStrategy, archiveDir 
 			}
 
 			rel, err := filepath.Rel(root, f.Path)
-			if err != nil {
+			if err != nil || strings.HasPrefix(rel, "..") {
 				rel = filepath.Base(f.Path)
 			}
 			dest := filepath.Join(runDir, rel)
-			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			// Defence-in-depth: ensure dest is still under runDir after Join.
+			cleanDest := filepath.Clean(dest)
+			if cleanDest != cleanRunDir && !strings.HasPrefix(cleanDest, cleanRunDir+string(filepath.Separator)) {
+				dest = filepath.Join(runDir, filepath.Base(f.Path))
+			}
+			if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 				return results, err
 			}
 			if err := os.Rename(f.Path, dest); err != nil {
@@ -131,7 +138,9 @@ func Archive(groups []scanner.DuplicateGroup, strategy KeepStrategy, archiveDir 
 				if err2 := copyFile(f.Path, dest); err2 != nil {
 					return results, fmt.Errorf("archive %s: %w", f.Path, err2)
 				}
-				os.Remove(f.Path)
+				if err2 := os.Remove(f.Path); err2 != nil {
+					return results, fmt.Errorf("remove original after cross-device copy %s: %w", f.Path, err2)
+				}
 			}
 			results = append(results, Result{
 				Action:   "archived",
@@ -144,8 +153,13 @@ func Archive(groups []scanner.DuplicateGroup, strategy KeepStrategy, archiveDir 
 
 	// Write manifest.
 	manifest := ManifestEntry{RunID: runID, Time: time.Now(), Results: results}
-	data, _ := json.MarshalIndent(manifest, "", "  ")
-	os.WriteFile(filepath.Join(runDir, "manifest.json"), data, 0644)
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return results, fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), data, 0644); err != nil {
+		return results, fmt.Errorf("write manifest: %w", err)
+	}
 
 	return results, nil
 }
@@ -154,19 +168,29 @@ func commonRoot(groups []scanner.DuplicateGroup) string {
 	var paths []string
 	for _, g := range groups {
 		for _, f := range g.Files {
-			paths = append(paths, f.Path)
+			paths = append(paths, filepath.Clean(f.Path))
 		}
 	}
 	if len(paths) == 0 {
-		return "/"
+		return string(filepath.Separator)
 	}
 	sort.Strings(paths)
-	first, last := paths[0], paths[len(paths)-1]
+	sep := string(filepath.Separator)
+	// Compare path components, not raw bytes, to avoid splitting inside a name.
+	first := strings.Split(paths[0], sep)
+	last := strings.Split(paths[len(paths)-1], sep)
 	i := 0
 	for i < len(first) && i < len(last) && first[i] == last[i] {
 		i++
 	}
-	return filepath.Dir(first[:i])
+	if i == 0 {
+		return sep
+	}
+	root := strings.Join(first[:i], sep)
+	if root == "" {
+		return sep
+	}
+	return root
 }
 
 func copyFile(src, dst string) error {

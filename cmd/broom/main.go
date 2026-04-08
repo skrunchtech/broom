@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +80,12 @@ func main() {
 		opts.Workers = *workers
 	}
 	opts.IncludeHidden = *includeHidden
-	opts.MinSize = parseSize(*minSizeStr)
+	minSize, err := parseSize(*minSizeStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	opts.MinSize = minSize
 	if *noDefaultExcludes {
 		opts.ExcludeDirs = nil
 	}
@@ -262,7 +269,7 @@ func runHeadless(paths []string, opts scanner.Options, strategy actions.KeepStra
 	}
 }
 
-func parseSize(s string) int64 {
+func parseSize(s string) (int64, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	multipliers := map[string]int64{
 		"KB": 1024,
@@ -271,14 +278,21 @@ func parseSize(s string) int64 {
 	}
 	for suffix, mult := range multipliers {
 		if strings.HasSuffix(s, suffix) {
-			var n int64
-			fmt.Sscanf(strings.TrimSuffix(s, suffix), "%d", &n)
-			return n * mult
+			n, err := strconv.ParseInt(strings.TrimSuffix(s, suffix), 10, 64)
+			if err != nil || n <= 0 {
+				return 0, fmt.Errorf("invalid size %q", s)
+			}
+			if n > math.MaxInt64/mult {
+				return 0, fmt.Errorf("size %q overflows int64", s)
+			}
+			return n * mult, nil
 		}
 	}
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
-	return n
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	return n, nil
 }
 
 // multiFlag allows a flag to be specified multiple times.
