@@ -86,6 +86,44 @@ broom --folders --archive="/Volumes/Extreme SSD/_broom-archive" \
       "/Volumes/Extreme SSD/macbook-pro-m1"
 ```
 
+### JSON output (for scripting and agents)
+
+Emits duplicate groups as structured JSON to stdout. Progress is written to
+stderr so output can be piped or redirected cleanly.
+
+```bash
+broom --json ~/Documents
+broom --json --min-size=500KB ~/Documents ~/Downloads
+broom --json ~/drive > duplicates.json
+```
+
+Output format:
+
+```json
+[
+  {
+    "hash": "abc123...",
+    "size": 4200000,
+    "keep": {
+      "path": "/Documents/taxes2023.pdf",
+      "size": 4200000,
+      "mod_time": "2024-03-01T12:00:00Z"
+    },
+    "duplicates": [
+      {
+        "path": "/Downloads/taxes2023.pdf",
+        "size": 4200000,
+        "mod_time": "2023-01-01T10:00:00Z"
+      }
+    ],
+    "recoverable_bytes": 4200000
+  }
+]
+```
+
+`keep` is the file selected by `--keep` strategy (default: newest). Each entry
+in `duplicates` is a candidate to archive or remove.
+
 ### Other flags
 
 ```bash
@@ -109,6 +147,7 @@ broom --version
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--json` | false | Emit duplicate groups as JSON to stdout (progress → stderr) |
 | `--folders` | false | Folder mode — find entire duplicate directories |
 | `--dry-run` | false | Show what would be removed, touch nothing |
 | `--archive=<dir>` | — | Move duplicates to `<dir>` with a manifest for verification |
